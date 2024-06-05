@@ -79,6 +79,7 @@ if __name__ == "__main__":
     parser.add_argument("--steps", type=int, default=6, help="number of steps")
     parser.add_argument("--model", type=str, default='claude-v1',
                                                 help="LLM choice")
+    parser.add_argument("--local", action="store_true", help="Flag indicating whether model is served locally")
     parser.add_argument("--continue_research", type=str, default=None, help="continue from a previous run")
     parser.add_argument("--interactive_interval", type=int, default=None, help="interactive interval")
     parser.add_argument("--enable_help", type=bool, default=False, help="enable help")

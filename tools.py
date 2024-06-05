@@ -52,7 +52,7 @@ def print_action(entries):
     return "".join([ k + ": " + v for k,v in  entries.items()])
 
 
-def summarize_remaining_genes(all_genes, summary_size=20, bs=1000):
+def summarize_remaining_genes(model, all_genes, summary_size=20, bs=1000):
 
     blocks = [all_genes[i:i + bs] for i in range(0, len(all_genes), bs)]
     abridged_list = []
@@ -75,7 +75,7 @@ def summarize_remaining_genes(all_genes, summary_size=20, bs=1000):
                 not include any gene that is guessed rather than 
                 directly present in the list.
                 """
-        completion = complete_text(prompt, model="claude-1", log_file=None)
+        completion = complete_text(prompt, model=model, log_file=None)
         abridged_list.append(completion)
 
     abridged_list = ','.join(abridged_list)
@@ -129,6 +129,15 @@ def process_valid_output(gene_next_sample, curr_sample, gene_sampled,
 
 def agent_loop(current_history, steps, use_gpt4, log_dir, args):
     valid_format_entires = ["Solution"]
+
+    from gptquery import GPT
+    task_prompt_text = "{prompt}"
+    model_name = f"openai/{args.model}" if args.local else args.model
+    model_endpoint = "http://GCRAZGDL3051:8000/v1" if args.local else None
+    model = GPT(model_name=model_name,
+                model_endpoint=model_endpoint,
+                task_prompt_text=task_prompt_text,
+                max_num_tokens=4096,)
     
     use_gpt4 = False
 
@@ -213,13 +222,13 @@ def agent_loop(current_history, steps, use_gpt4, log_dir, args):
                     non_hit_sum_prompt = research_problem + "\n Till now, these are all tested genes that are not hits along with their scores: \n" + gene_readout.drop(hits).to_string()
                     non_hit_sum_prompt += "\n Summarize this in a few lines to find some common pattern in these which will aid in the next steps of experimental design to maximize your cumulative hits."
                     sum_log_file = os.path.join(log_dir , f"step_{curr_step}_log_neg_sum.log")
-                    negative_examples_summary = complete_text(non_hit_sum_prompt, model = "claude-1", log_file = sum_log_file)
+                    negative_examples_summary = complete_text(non_hit_sum_prompt, model=model, log_file = sum_log_file)
 
                     
                     hit_sum_prompt = research_problem + "\n Till now, you have identified the following genes as hits along with their scores: \n" + ground_truth.loc[hits].to_string()
                     hit_sum_prompt += "\n Summarize this in a few lines to find some common pattern in these which will aid in the next steps of experimental design to maximize your cumulative hits."
                     sum_log_file = os.path.join(log_dir , f"step_{curr_step}_log_pos_sum.log")
-                    positive_examples_summary = complete_text(hit_sum_prompt, model = "claude-1", log_file = sum_log_file)
+                    positive_examples_summary = complete_text(hit_sum_prompt, model=model, log_file = sum_log_file)
 
                     prompt += "\n This is not your first round. The summary of all tested genes and " \
                             "their measured log fold change are: \n" + negative_examples_summary
@@ -240,6 +249,7 @@ def agent_loop(current_history, steps, use_gpt4, log_dir, args):
             # prompting
             f.write("Step " + str(curr_step) + ":\n")
 
+            # TODO(dahoas): refactor
             if curr_step < 5 and args.lit_review:
                 print("starting literature review")
                 lit_review_prompt += f"\nYou might have already some literature review information as provided below. Try to gather information which is not repititive to what you have and finally helps the most in solving the research problem at hand. \n {lit_review_summary} \n "
@@ -255,22 +265,14 @@ def agent_loop(current_history, steps, use_gpt4, log_dir, args):
 
             ## Help GPT count and not repeat genes
             for itr in range(args.prompt_tries):
-                if use_gpt4:
-                    import pdb; pdb.set_trace()
-                    completion = complete_text_gpt4(prompt_try, stop_sequences=[
-                                        "Observation:"], log_file=log_file)
-                else:
-                    
-                    completion = complete_text(prompt_try, model = args.model, log_file=log_file)
+                completion = complete_text(prompt_try, model = model, log_file=log_file)
 
-                    if "Gene Search:" in completion:
-                        completion_pre = completion.split("4. Solution:")[0] 
-                        # execute action gene search
-                        completion_pre = completion_pre + "Gene Search Result:" + gene_search_f(completion_pre.split("Gene Search:")[1].strip(), args.gene_search_diverse)
-                        
-                        
-                        completion_post = complete_text(prompt_try + anthropic.AI_PROMPT +  completion_pre + "\n\n3. Solution:", model = args.model, ai_prompt = "", log_file=log_file)
-                        completion = completion_pre + "\n\n4. Solution:" + completion_post
+                if "Gene Search:" in completion:
+                    completion_pre = completion.split("4. Solution:")[0] 
+                    # execute action gene search
+                    completion_pre = completion_pre + "Gene Search Result:" + gene_search_f(completion_pre.split("Gene Search:")[1].strip(), args.gene_search_diverse)
+                    completion_post = complete_text(prompt_try + anthropic.AI_PROMPT +  completion_pre + "\n\n3. Solution:", model = model, ai_prompt = "", log_file=log_file)
+                    completion = completion_pre + "\n\n4. Solution:" + completion_post
 
                 # parse the action and action input
                 try:
@@ -283,7 +285,7 @@ def agent_loop(current_history, steps, use_gpt4, log_dir, args):
 
                 if not valid_format:
                     print(itr, 'Invalid output')
-                    prompt_ubpdate = '' # this will remove prompt_update from the prompt!!
+                    prompt_update = '' # this will remove prompt_update from the prompt!!
 
                 else:
                     ## Save predicted gene list
@@ -316,7 +318,7 @@ def agent_loop(current_history, steps, use_gpt4, log_dir, args):
                             # Start choosing from gene list instead of random sample
                             num_genes_pick = args.num_genes - len(curr_sample)
                             genes_remain = list(set(measured_genes).difference(set(gene_sampled)))
-                            genes_remain_summary = summarize_remaining_genes(genes_remain)
+                            genes_remain_summary = summarize_remaining_genes(model, genes_remain)
                         else:
                             genes_remain_summary = list(set(
                                 genes_remain_summary).difference(set(curr_sample)))
@@ -361,12 +363,7 @@ Please do not critique/make changes if there is no need to make a change.
             curr_sample = []
             ## Help GPT count and not repeat genes
             for itr in range(args.prompt_tries):
-                if use_gpt4:
-                    import pdb; pdb.set_trace()
-                    completion = complete_text_gpt4(prompt_try, stop_sequences=[
-                                        "Observation:"], log_file=log_file)
-                else:
-                    completion = complete_text(prompt_try, model = args.model, log_file=log_file)
+                completion = complete_text(prompt_try, model = model, log_file=log_file)
 
                 # parse the action and action input
                 try:
@@ -407,7 +404,7 @@ Please do not critique/make changes if there is no need to make a change.
                             # Start choosing from gene list instead of random sample
                             num_genes_pick = args.num_genes - len(curr_sample)
                             genes_remain = list(set(measured_genes).difference(set(gene_sampled)))
-                            genes_remain_summary = summarize_remaining_genes(genes_remain)
+                            genes_remain_summary = summarize_remaining_genes(model, genes_remain)
                         else:
                             genes_remain_summary = list(set(
                                 genes_remain_summary).difference(set(curr_sample)))

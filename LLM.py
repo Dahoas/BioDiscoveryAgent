@@ -29,26 +29,35 @@ except Exception as e:
 try:
     import openai
     # setup OpenAI API key
-    openai.organization, openai.api_key  =  open("openai_api_key.txt").read().strip().split(":")    
+    openai.api_key  =  open("openai_api_key.txt").read().strip()
     os.environ["OPENAI_API_KEY"] = openai.api_key 
 except Exception as e:
     print(e)
     print("Could not load OpenAI API key openai_api_key.txt.")
 
 
-def log_to_file(log_file, prompt, completion, model, max_tokens_to_sample):
+def log_to_file(log_file, prompt, completion):
     """ Log the prompt and completion to a file."""
     with open(log_file, "a") as f:
         f.write("\n===================prompt=====================\n")
-        f.write(f"{anthropic.HUMAN_PROMPT} {prompt} {anthropic.AI_PROMPT}")
-        num_prompt_tokens = len(enc.encode(f"{anthropic.HUMAN_PROMPT} {prompt} {anthropic.AI_PROMPT}"))
-        f.write(f"\n==================={model} response ({max_tokens_to_sample})=====================\n")
+        f.write(f"HUMAN: {prompt} ASSISTANT:")
+        f.write(f"\n===================response=====================\n")
         f.write(completion)
-        num_sample_tokens = len(enc.encode(completion))
-        f.write("\n===================tokens=====================\n")
-        f.write(f"Number of prompt tokens: {num_prompt_tokens}\n")
-        f.write(f"Number of sampled tokens: {num_sample_tokens}\n")
         f.write("\n\n")
+
+from gptquery import GPT
+
+def complete_text(prompt, log_file, model: GPT, **kwargs):
+    inputs = [{"prompt": prompt}]
+    output = model(inputs, is_complete_keywords=["Observation:"])[0]["response"]
+    if log_file is not None:
+        log_to_file(log_file, prompt, output)
+    return output
+
+# specify fast models for summarization etc
+FAST_MODEL = "claude-v1"
+def complete_text_fast(prompt, **kwargs):
+    return complete_text(prompt = prompt, model = FAST_MODEL, temperature =0.01, **kwargs)
 
 
 def complete_text_claude(prompt, stop_sequences=[anthropic.HUMAN_PROMPT], model="claude-v1", max_tokens_to_sample = 2000, temperature=0.5, log_file=None, **kwargs):
@@ -86,85 +95,3 @@ def get_embedding_crfm(text, model="openai/gpt-4-0314"):
     request = Request(model="openai/text-similarity-ada-001", prompt=text, embedding=True)
     request_result: RequestResult = service.make_request(auth, request)
     return request_result.embedding 
-    
-def complete_text_crfm(prompt=None, stop_sequences = None, model="openai/gpt-4-0314",  max_tokens_to_sample=2000, temperature = 0.5, log_file=None, messages = None, **kwargs):
-    
-    random = log_file
-    if messages:
-        request = Request(
-                prompt=prompt, 
-                messages=messages,
-                model=model, 
-                stop_sequences=stop_sequences,
-                temperature = temperature,
-                max_tokens = max_tokens_to_sample,
-                random = random
-            )
-    else:
-        print("model", model)
-        print("max_tokens", max_tokens_to_sample)
-        request = Request(
-                prompt=prompt, 
-                model=model, 
-                stop_sequences=stop_sequences,
-                temperature = temperature,
-                max_tokens = max_tokens_to_sample,
-                random = random
-        )
-    
-    try:      
-        request_result: RequestResult = service.make_request(auth, request)
-    except Exception as e:
-        # probably too long prompt
-        print(e)
-        exit()
-        # raise TooLongPromptError()
-    
-    if request_result.success == False:
-        print(request.error)
-        # raise LLMError(request.error)
-    completion = request_result.completions[0].text
-    if log_file is not None:
-        log_to_file(log_file, prompt, completion, model, max_tokens_to_sample)
-    return completion
-
-
-def complete_text_openai(prompt, stop_sequences=[], model="gpt-3.5-turbo", max_tokens_to_sample=2000, temperature=0.5, log_file=None, **kwargs):
-    
-    """ Call the OpenAI API to complete a prompt."""
-    raw_request = {
-          "model": model,
-          "temperature": temperature,
-          "max_tokens": max_tokens_to_sample,
-          "stop": stop_sequences or None,  # API doesn't like empty list
-          **kwargs
-    }
-    if model.startswith("gpt-3.5") or model.startswith("gpt-4"):
-        messages = [{"role": "user", "content": prompt}]
-        response = openai.ChatCompletion.create(**{"messages": messages,**raw_request})
-        completion = response["choices"][0]["message"]["content"]
-    else:
-        response = openai.Completion.create(**{"prompt": prompt,**raw_request})
-        completion = response["choices"][0]["text"]
-    if log_file is not None:
-        log_to_file(log_file, prompt, completion, model, max_tokens_to_sample)
-    return completion
-
-def complete_text(prompt, log_file, model, **kwargs):
-    """ Complete text using the specified model with appropriate API. """
-    
-    if model.startswith("claude"):
-        # use anthropic API
-        completion = complete_text_claude(prompt, stop_sequences=[anthropic.HUMAN_PROMPT, "Observation:"], log_file=log_file, model=model, **kwargs)
-    elif "/" in model:
-        # use CRFM API since this specifies organization like "openai/..."
-        completion = complete_text_crfm(prompt, stop_sequences=["Observation:"], log_file=log_file, model=model, **kwargs)
-    else:
-        # use OpenAI API
-        completion = complete_text_openai(prompt, stop_sequences=["Observation:"], log_file=log_file, model=model, **kwargs)
-    return completion
-
-# specify fast models for summarization etc
-FAST_MODEL = "claude-v1"
-def complete_text_fast(prompt, **kwargs):
-    return complete_text(prompt = prompt, model = FAST_MODEL, temperature =0.01, **kwargs)
