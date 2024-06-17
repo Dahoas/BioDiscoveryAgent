@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from get_lit_review import get_lit_review
+from gptquery import GPT
 
 
 def parse_action_input(s, entries):
@@ -95,18 +96,21 @@ def gene_choices_prompt(prompt, num_genes_pick, remaining_genes):
 
     prompt += " Please add {} more genes to this list from {}." \
                     "\n Remember not to include any previously tested " \
-                    "genes. Begin this list with the word 'Solution:' " \
+                    "genes OR genes you have already proposed. Begin this list with the word 'Solution:' " \
                 "".format(num_genes_pick, remaining_genes)
 
     return prompt
     
     
-def process_valid_output(gene_next_sample, curr_sample, gene_sampled,
-                         dropped_genes, args):
+def process_valid_output(gene_next_sample, 
+                         curr_sample, 
+                         gene_sampled,
+                         dropped_genes, 
+                         args):
 
-        new_genes_pred = list(set(gene_next_sample) -
-                              set(gene_sampled) -
-                              set(curr_sample))
+        new_genes_pred = list(set(gene_next_sample)
+                              - set(gene_sampled)
+                              - set(curr_sample))
         print('New genes predicted:', len(new_genes_pred))
         curr_sample = curr_sample + new_genes_pred
 
@@ -128,20 +132,19 @@ def process_valid_output(gene_next_sample, curr_sample, gene_sampled,
 
 
 def agent_loop(current_history, steps, use_gpt4, log_dir, args):
-    valid_format_entires = ["Solution"]
-
-    from gptquery import GPT
+    # Set up LLM
     task_prompt_text = "{prompt}"
     model_name = f"openai/{args.model}" if args.local else args.model
     model_endpoint = "http://GCRAZGDL3051:8000/v1" if args.local else None
+    max_num_tokens = 1024
+    logging_path = os.path.join(log_dir, "responses.jsonl")
     model = GPT(model_name=model_name,
                 model_endpoint=model_endpoint,
                 task_prompt_text=task_prompt_text,
-                max_num_tokens=4096,)
-    
-    use_gpt4 = False
+                max_num_tokens=max_num_tokens,
+                logging_path=logging_path,)
 
-
+    # Load data
     research_problem = current_history["research_problem"]
     if not args.combinatorial:
         ground_truth = pd.read_csv('./datasets/ground_truth_' + args.data_name + '.csv',
@@ -161,10 +164,8 @@ def agent_loop(current_history, steps, use_gpt4, log_dir, args):
 
     measured_genes = ground_truth.index.values
     gene_sampled = []
-    
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
 
+    valid_format_entires = ["Solution"]
     with open(os.path.join(log_dir, "main_log") , "w", 1) as f:
         f.write("================================Start=============================\n")
         last_steps = 3
@@ -172,24 +173,23 @@ def agent_loop(current_history, steps, use_gpt4, log_dir, args):
         hits_history = []
         lit_review_summary = ""
         for curr_step in range(steps):
-            
-            #curr_step = len(current_history["actions"])
-
-            if curr_step !=0:
-                ## Add experimental result from last run to prompt
+            log_file = os.path.join(log_dir , f"step_{curr_step}_log.log")
+            if curr_step != 0:
+                # Add experimental result from last run to prompt
                 gene_sampled = list(np.load(log_dir + '/sampled_genes_'+str(
                             curr_step)+'.npy'))
                 if args.combinatorial:
                     gene_sampled = [tuple(l) for l in gene_sampled]
                 gene_readout = ground_truth.loc[gene_sampled]
 
-                ## Get list of hits
+                # Get list of hits
                 hits = list(set(gene_sampled).intersection(all_hit_genes))
                 print(curr_step, 'Number of cumulative hits:', str(len(hits)))
 
-
+            # Construct prompt
             prompt = 'Step {}\n '.format(curr_step)
             prompt += current_history["initial_prompt"].format(research_problem=research_problem)
+
             if args.lit_review:
                 lit_review_prompt = current_history["initial_prompt"].format(research_problem=research_problem).split("Always respond")[0]
 
@@ -197,13 +197,13 @@ def agent_loop(current_history, steps, use_gpt4, log_dir, args):
             
             if curr_step == 0:
                 pass
-                
             else:
                 if len(gene_readout) < 1500:
                     ## Append experiment results to the current prompt
+                    tested_genes = gene_readout.drop(hits).index.tolist()
                     prompt += "\n This is not your first round. All tested genes and " \
                             "their measured log fold change are: \n"\
-                            + gene_readout.drop(hits).to_string()
+                            + "\n".join(tested_genes)
 
                     prompt +=  "\n You have successfully identified {} hits so " \
                                 "far over all experiment cycles! The results for the " \
@@ -224,7 +224,6 @@ def agent_loop(current_history, steps, use_gpt4, log_dir, args):
                     sum_log_file = os.path.join(log_dir , f"step_{curr_step}_log_neg_sum.log")
                     negative_examples_summary = complete_text(non_hit_sum_prompt, model=model, log_file = sum_log_file)
 
-                    
                     hit_sum_prompt = research_problem + "\n Till now, you have identified the following genes as hits along with their scores: \n" + ground_truth.loc[hits].to_string()
                     hit_sum_prompt += "\n Summarize this in a few lines to find some common pattern in these which will aid in the next steps of experimental design to maximize your cumulative hits."
                     sum_log_file = os.path.join(log_dir , f"step_{curr_step}_log_pos_sum.log")
@@ -244,28 +243,27 @@ def agent_loop(current_history, steps, use_gpt4, log_dir, args):
 
                 prompt += current_history["instructions"]
 
-
-
             # prompting
             f.write("Step " + str(curr_step) + ":\n")
 
             # TODO(dahoas): refactor
+            # Do lit review
             if curr_step < 5 and args.lit_review:
                 print("starting literature review")
                 lit_review_prompt += f"\nYou might have already some literature review information as provided below. Try to gather information which is not repititive to what you have and finally helps the most in solving the research problem at hand. \n {lit_review_summary} \n "
-                lit_review_summary += get_lit_review(str(lit_review_prompt), model=args.model, max_number=4)
+                lit_review_summary += get_lit_review(str(lit_review_prompt), model=model, max_number=4)
                 print("finished literature review")
                 prompt += f"\n You have done some literature review till now and have the following information at your disposal which you may use to make your predictions: \n {lit_review_summary}"
 
-            log_file = os.path.join(log_dir , f"step_{curr_step}_log.log")
             prompt_try = str(prompt)
 
             curr_sample = []
             genes_remain_summary = None
 
-            ## Help GPT count and not repeat genes
+            # Main action loop
             for itr in range(args.prompt_tries):
-                completion = complete_text(prompt_try, model = model, log_file=log_file)
+                # Query LLM
+                completion = complete_text(prompt_try, model=model, log_file=log_file)
 
                 if "Gene Search:" in completion:
                     completion_pre = completion.split("4. Solution:")[0] 
@@ -276,35 +274,28 @@ def agent_loop(current_history, steps, use_gpt4, log_dir, args):
 
                 # parse the action and action input
                 try:
-                    entries = parse_entries(completion,
-                                        [e.strip() for e in
-                                         valid_format_entires])
+                    entries = parse_entries(completion, [e.strip() for e in valid_format_entires])
                     valid_format = True
                 except:
                     valid_format = False
 
                 if not valid_format:
                     print(itr, 'Invalid output')
-                    prompt_update = '' # this will remove prompt_update from the prompt!!
-
+                    prompt_update = ''
                 else:
                     ## Save predicted gene list
                     pred_genes = entries['Solution'].replace("\n", ",").split(',')
                     pred_genes = [p.strip(' \n[]') for p in pred_genes]
-                    pred_genes = [p.split('.')[-1].strip(' ') for p in
-                                  pred_genes]
+                    pred_genes = [p.split('.')[-1].strip(' ') for p in pred_genes]
                     
                     if args.combinatorial:
                         pred_genes = [tuple(sorted(s.split(" + "))) for s in pred_genes]
 
-                    gene_next_sample = list(set(pred_genes).intersection(set(
-                        measured_genes)))
-                    print('Dropped genes:',
-                          len(pred_genes) - len(gene_next_sample))
+                    gene_next_sample = list(set(pred_genes).intersection(set(measured_genes)))
+                    print('Dropped genes:', len(pred_genes) - len(gene_next_sample))
                     dropped_genes = set(pred_genes) - set(gene_next_sample)
-                    curr_sample, prompt_update = \
-                        process_valid_output(gene_next_sample, curr_sample,
-                                             gene_sampled, dropped_genes, args)
+                    curr_sample, prompt_update = process_valid_output(gene_next_sample, curr_sample, \
+                                                                      gene_sampled, dropped_genes, args)
 
                     if prompt_update is None:
                         all_sampled_so_far = gene_sampled + curr_sample[:args.num_genes]
@@ -367,8 +358,7 @@ Please do not critique/make changes if there is no need to make a change.
 
                 # parse the action and action input
                 try:
-                    entries = parse_entries(completion,
-                                        [e.strip() for e in valid_format_entires])
+                    entries = parse_entries(completion, [e.strip() for e in valid_format_entires])
                     valid_format = True
                 except:
                     valid_format = False

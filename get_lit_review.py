@@ -102,7 +102,7 @@ Here is a detailed description on what to look for and what should returned: {th
 The description should short and also reference crtical lines in the script relevant to what is being looked for. Only describe what is objectively confirmed by the file content. Do not include guessed numbers. If you cannot find the answer to certain parts of the request, you should say "In this segment, I cannot find ...".
 """
 
-        completion = complete_text_claude(prompt, model = model, log_file=None)
+        completion = complete_text(prompt, model = model, log_file=None)
         descriptions.append(completion)
     if len(descriptions) == 1:
         return descriptions[0]
@@ -123,10 +123,11 @@ def what_to_query(current_prompt, model):
     prompt = '''
 You are an expert at literature review. You are given the current state of the research problem and some previously done research: \n \n
 {}
-Your task is to come up with a one-line very focussed query without any additonal terms surrounding it to search relevant papers which you think would help the most in making progress on the provided research problem. 
+Your task is to come up with a one-line very focussed query without any additonal terms surrounding it to search relevant papers which you think would help the most in making progress on the provided research problem.
+The simpler the better.
     '''.format(current_prompt)
     
-    print(current_prompt)
+    #print(current_prompt)
     query = complete_text(prompt=prompt, model = model, log_file='paper_search.log')
     return query
 
@@ -158,7 +159,7 @@ def arxiv_search(query, max_papers, folder_name = ".", **kwargs):
 def scholar_search(query, max_papers , folder_name = ".", **kwargs):
     
     search_query = scholarly.search_pubs(query)
-    scholarly.pprint(next(search_query))
+    #scholarly.pprint(next(search_query))
 
     search = arxiv.Search(
         query = query,
@@ -203,24 +204,32 @@ def get_lit_review(prompt, model, max_number):
     # return lit_review
     while True:
         query = what_to_query(prompt, model)
+        print("PUBMED QUERY:")
         print(query)
+        print(max_number)
         papers = list(pubmed.query(query, max_results=max_number)) 
         while True:
             try:
                 papers = list(pubmed.query(query, max_results=max_number))
+                print(f"Found {len(papers)} papers...")
                 break
             except:
                 print("Rate limit reached. Waiting for 10 seconds")
                 time.sleep(10)
-            
+
+        print("Retrieved PubMed query...")
         
         for i, paper in enumerate(papers):
             lit_review += '\n' + paper.title + '\n'
             # lit_review += paper['biorxiv_url'] + '\n'
             prompt_for_summary = str(paper.title) + '\n' +  str(paper.abstract) + '\n' +  str(paper.methods) + '\n' + str(paper.conclusions) + '\n' + str(paper.results) + '\n'
+            print(f"Summarizing {paper.title}...")
             summarized_paper = understand_file(prompt_for_summary, f"general information that points to genes used for the protein production, some potential pathways, or anything else that will help make progress based on the current state of the research as given by: {prompt}", model)
+            print(f"Summarized {paper.title}!")
             lit_review += summarized_paper + '\n \n'
         if len(lit_review)>10:
             break
+
+    print("Returning literature review...")
     
     return str(lit_review)

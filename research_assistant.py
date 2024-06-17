@@ -34,7 +34,7 @@ Always respond in this format exactly:
 2. Research Plan: The full high level research plan, with current status and reasoning behind each proposed approach. It should be at most 5 sentences.
 3. Solution: Propose a list of predicted genes to test separated by commas in this format: 1. <Gene name 1>, 2. <Gene name 2> ...
 Do not include any genes from this prompt (since they're already tested).
-
+When you are done proposing genes print <DONE>.
 """
 
 initial_prompt_gene_search = """You are a scientist working on problems in drug discovery.
@@ -158,9 +158,13 @@ if __name__ == "__main__":
         "instructions": instructions
     }
 
-    
     log_dir = os.path.join(args.log_dir +'_'+ args.data_name, args.run_name)
+    # Set up logging
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
     print("Log directory: ", log_dir)
+    with open(os.path.join(log_dir, "config.json"), "w") as f:
+        json.dump(vars(args), f, indent=2)
     agent_loop(current_history, args.steps, args.use_gpt4, log_dir, args)
 
 

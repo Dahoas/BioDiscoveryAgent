@@ -3,6 +3,8 @@
 import os
 import tiktoken
 
+from gptquery import GPT
+
 enc = tiktoken.get_encoding("cl100k_base")
 
 try:
@@ -45,11 +47,10 @@ def log_to_file(log_file, prompt, completion):
         f.write(completion)
         f.write("\n\n")
 
-from gptquery import GPT
 
 def complete_text(prompt, log_file, model: GPT, **kwargs):
     inputs = [{"prompt": prompt}]
-    output = model(inputs, is_complete_keywords=["Observation:"])[0]["response"]
+    output = model(inputs, is_complete_keywords=["Observation:", "<DONE>"])[0]["response"]
     if log_file is not None:
         log_to_file(log_file, prompt, output)
     return output
